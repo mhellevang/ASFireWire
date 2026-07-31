@@ -21,8 +21,21 @@ permissions:
 
 jobs:
   release:
-    name: Build & ad-hoc sign
+    name: Build & ad-hoc sign (${{ matrix.variant }})
     runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two zips per release: the default build, and the SCSI HBA variant for
+        # SBP-2/CoolScan testers (personality + scsicontroller entitlement —
+        # sign.sh auto-detects and embeds the right entitlements file).
+        include:
+          - variant: default
+            build_args: ''
+            suffix: ''
+          - variant: scsi
+            build_args: '--scsi'
+            suffix: '-scsi'
     env:
       CONFIGURATION: Release
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
@@ -37,7 +50,7 @@ jobs:
       - name: Build (Release, unsigned by design)
         run: |
           chmod +x build.sh bump.sh sign.sh
-          ./build.sh --no-bump --config Release
+          ./build.sh --no-bump --config Release ${{ matrix.build_args }}
 
       - name: Ad-hoc sign (embed entitlements)
         run: ./sign.sh
@@ -60,7 +73,7 @@ jobs:
           fi
           # "-adhoc" suffix keeps ASFW-<version>.zip free for a future
           # properly signed/notarized asset on the same release.
-          ZIP="ASFW-${VERSION}-adhoc.zip"
+          ZIP="ASFW-${VERSION}${{ matrix.suffix }}-adhoc.zip"
           ditto -c -k --keepParent "$APP" "$ZIP"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -71,7 +84,7 @@ jobs:
         with:
           # No .zip suffix: artifact downloads are zip containers themselves,
           # so a .zip name would yield ASFW-x.zip.zip.
-          name: ASFW-${{ steps.package.outputs.version }}-adhoc
+          name: ASFW-${{ steps.package.outputs.version }}${{ matrix.suffix }}-adhoc
           path: ${{ steps.package.outputs.zip }}
           if-no-files-found: error
 
@@ -79,9 +92,10 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+        # Both matrix jobs race the create; the loser falls through to upload.
         run: |
           gh release create "${GITHUB_REF_NAME}" "${{ steps.package.outputs.zip }}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Experimental prebuilt tester build (ad-hoc signed, NOT notarized). Requires SIP off + \`systemextensionsctl developer on\`. See the README install section." \
+            --notes "Experimental prebuilt tester builds (ad-hoc signed, NOT notarized). Requires SIP off + \`systemextensionsctl developer on\` — see the README install section. The \`-scsi-\` zip additionally enables the SCSI HBA for FireWire SBP-2 devices (e.g. Nikon CoolScan film scanners via VueScan); the plain zip is audio-only." \
             --prerelease \
           || gh release upload "${GITHUB_REF_NAME}" "${{ steps.package.outputs.zip }}" --clobber
