@@ -175,6 +175,32 @@ TEST(SBP2ORBTests, ManagementORBStatusWriteCancelsTimeout) {
     EXPECT_EQ(0, completionStatus);
 }
 
+TEST(SBP2ORBTests, ManagementORBTimesOutWhenAgentWriteNeverCompletes) {
+    // Regression: a wedged target whose fetch/management engine stops ACKing
+    // can strand the agent write without a completion. The ORB timeout must
+    // cover that window too (armed in Execute, not OnWriteComplete) —
+    // otherwise the LUN-reset escalation hangs forever (observed: LS-4000).
+    ORBTimerRig rig;
+
+    SBP2ManagementORB orb(rig.bus, rig.bus, rig.addressManager, reinterpret_cast<void*>(0x8));
+    orb.SetFunction(SBP2ManagementORB::Function::LogicalUnitReset);
+    orb.SetLoginID(0x12);
+    orb.SetManagementAgentOffset(0x80);
+    orb.SetTargetNode(1, 0x3F);
+    orb.SetTimeout(5);
+    orb.SetScheduler(&rig.scheduler);
+
+    int completionStatus = 99;
+    orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
+
+    ASSERT_TRUE(orb.Execute());
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());
+
+    // Never complete the write — the timer must still fire.
+    rig.AdvanceMs(5);
+    EXPECT_EQ(-2, completionStatus);
+}
+
 TEST(SBP2ORBTests, ManagementORBUsesFullBusNodeIdInEmbeddedAddresses) {
     ORBTimerRig rig;
 
