@@ -184,7 +184,14 @@ bool SBP2ManagementORB::Execute() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{orbAddressBE_.data(), orbAddressBE_.size()},
         speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+        [this, weak = std::weak_ptr<int>(lifetimeToken_)](
+            Async::AsyncStatus status, std::span<const uint8_t> response) {
+            // The timeout is armed before this write, so OnTimeout can fire —
+            // and Complete() can destroy the ORB — while the write is still
+            // in flight. Guard like the timer lambda above.
+            if (weak.expired()) {
+                return;
+            }
             OnWriteComplete(status, response);
         });
 
